@@ -41,6 +41,16 @@
         width: 180px; height: 180px; margin: 0 auto 12px;
         background: url('TemplateData/game-icon.png') center / contain no-repeat;
       }
+      /* Spinner shown while the per-game icon is being fetched. Removed as soon as a
+         partner icon is applied, and torn down with the rest of the loading UI either way. */
+      #unity-logo-spinner {
+        width: 34px; height: 34px; margin: 0 auto 10px;
+        border: 3px solid rgba(255, 255, 255, 0.18);
+        border-top-color: rgba(255, 255, 255, 0.85);
+        border-radius: 50%;
+        animation: gb-spin 0.9s linear infinite;
+      }
+      @keyframes gb-spin { to { transform: rotate(360deg); } }
       #unity-progress-bar-empty {                 /* track */
         width: 300px; height: 18px; margin: 12px auto 0;
         background: #d9d9d9 !important; background-image: none !important;
@@ -69,6 +79,7 @@
       <canvas id="unity-canvas" width=540 height=960 tabindex="-1"></canvas>
       <div id="unity-loading-bar">
         <div id="unity-logo"></div>
+        <div id="unity-logo-spinner"></div>
         <div id="unity-progress-bar-empty"><div id="unity-progress-bar-full"></div></div>
         <div id="unity-progress-percent">0%</div>
       </div>
@@ -156,6 +167,7 @@
             if (el.parentNode) el.parentNode.removeChild(el);
           }
           killEl("#unity-logo");
+          killEl("#unity-logo-spinner");
           killEl("#unity-progress-bar-full");
           killEl("#unity-progress-bar-empty");
           killEl("#unity-progress-percent");
@@ -172,6 +184,72 @@
         }).catch((message) => { alert(message); });
       };
       document.body.appendChild(script);
+
+      // ===== Dynamic loading-screen icon (GameBull /context) =====
+      //
+      // The loading screen is shown BEFORE Unity boots, so C# cannot set it — this has to
+      // happen here, in the template's own JavaScript.
+      //
+      // Started AFTER the Unity loader above is already queued, and written fire-and-forget:
+      // nothing in here may delay or block the build download.
+      //
+      // gameId is read from the URL like every other boot param and is treated as REQUIRED.
+      // It is deliberately not hardcoded: a hardcoded id that did not match this game would
+      // still be a valid id for a DIFFERENT game, so a mismatch would quietly fetch that
+      // game's context and put its logo on our loading screen — the same failure the tenant
+      // -wide logoUrl field causes. Missing param -> keep the static icon, which is correct
+      // and obvious.
+      (function applyPartnerLoadingIcon() {
+        try {
+          var q          = new URLSearchParams(window.location.search);
+          var tenantSlug = q.get("tenantSlug");
+          var token      = q.get("sessionToken") || q.get("bootToken") || q.get("token");
+          var gameId     = q.get("gameId");
+          var apiBase    = q.get("apiBase") || "https://api.staging.g-b.store";
+
+          // Anything missing -> leave the static icon in place. No error, no blank screen.
+          if (!tenantSlug || !token || !gameId) return;
+
+          // Hard timeout so a slow API can never leave the icon stuck on the spinner.
+          var ctl   = new AbortController();
+          var timer = setTimeout(function () { ctl.abort(); }, 4000);
+
+          fetch(apiBase.replace(/\/+$/, "")
+                  + "/play/games/" + encodeURIComponent(gameId)
+                  + "/context?tenantSlug=" + encodeURIComponent(tenantSlug),
+                { method: "GET",
+                  headers: { "Authorization": "Bearer " + token },
+                  signal: ctl.signal })
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (data) {
+              clearTimeout(timer);
+              if (!data) return;                       // 401 / 404 -> static icon
+              var c = data.customization || {};
+
+              // PER-GAME fields only, in this order. logoUrl / tenantLogoUrl / assets[]
+              // are tenant-wide and have been seen returning another game's artwork, and
+              // assets[] belongs to the in-game art path handled by the C# SDK.
+              var iconUrl =
+                (typeof c.gameLogoUrl   === "string" && c.gameLogoUrl)   ? c.gameLogoUrl   :
+                (typeof c.gameBannerUrl === "string" && c.gameBannerUrl) ? c.gameBannerUrl : null;
+              if (!iconUrl) return;                    // admin uploaded none -> static icon
+
+              // Preload, then swap only once the image has actually decoded, so a slow or
+              // broken URL can never flash or blank the loading screen.
+              var img = new Image();
+              img.onload = function () {
+                var el = document.querySelector("#unity-logo");
+                if (!el) return;                       // loading UI already torn down
+                el.style.backgroundImage = 'url("' + iconUrl.replace(/"/g, "%22") + '")';
+                var sp = document.querySelector("#unity-logo-spinner");
+                if (sp && sp.parentNode) sp.parentNode.removeChild(sp);
+              };
+              img.onerror = function () { /* keep the static icon */ };
+              img.src = iconUrl;
+            })
+            .catch(function () { clearTimeout(timer); });   // network / abort -> static icon
+        } catch (e) { /* no URLSearchParams / no fetch -> static icon */ }
+      })();
     </script>
   </body>
 </html>
