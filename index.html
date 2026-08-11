@@ -41,10 +41,18 @@
         width: 180px; height: 180px; margin: 0 auto 12px;
         background: url('TemplateData/game-icon.png') center / contain no-repeat;
       }
-      /* Spinner shown while the per-game icon is being fetched. Removed as soon as a
-         partner icon is applied, and torn down with the rest of the loading UI either way. */
+      /* Spinner shown while the per-game icon is being fetched.
+         ABSOLUTELY POSITIONED, centred over the 180x180 logo box, so it takes up no space in
+         the layout. In normal flow its removal reflowed everything below it and the icon
+         visibly jumped upwards as it appeared. Out of flow, revealing the icon changes
+         nothing else on the screen.
+         Centred with left/top arithmetic rather than translate(-50%,-50%), because the spin
+         keyframe animates `transform` and would overwrite a translate. */
       #unity-logo-spinner {
-        width: 34px; height: 34px; margin: 0 auto 10px;
+        position: absolute;
+        left: calc(50% - 17px);      /* half the 34px width */
+        top: 73px;                   /* 90px (centre of logo box) - 17px */
+        width: 34px; height: 34px; margin: 0;
         border: 3px solid rgba(255, 255, 255, 0.18);
         border-top-color: rgba(255, 255, 255, 0.85);
         border-radius: 50%;
